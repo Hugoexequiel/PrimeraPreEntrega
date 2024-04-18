@@ -1,6 +1,10 @@
 const express = require('express');
-const { v4: uuidv4 } = require('uuid');
+const exphbs = require('express-handlebars');
+const http = require('http');
+const WebSocket = require('ws');
+
 const app = express();
+const server = http.createServer(app);
 const PORT = 8080;
 
 let products = [];
@@ -8,7 +12,11 @@ let carts = [];
 
 app.use(express.json());
 
+app.engine('handlebars', exphbs());
+app.set('view engine', 'handlebars');
+
 const productsRouter = express.Router();
+const cartsRouter = express.Router();
 
 productsRouter.get('/', (req, res) => {
     res.json(products);
@@ -30,6 +38,7 @@ productsRouter.post('/', (req, res) => {
         ...req.body
     };
     products.push(newProduct);
+    io.emit('createProduct', newProduct);
     res.json(newProduct);
 });
 
@@ -51,7 +60,8 @@ productsRouter.delete('/:pid', (req, res) => {
     const productId = req.params.pid;
     const productIndex = products.findIndex(p => p.id === productId);
     if (productIndex !== -1) {
-        products.splice(productIndex, 1);
+        const deletedProduct = products.splice(productIndex, 1)[0];
+        io.emit('deleteProduct', deletedProduct.id);
         res.json({ message: 'Producto eliminado exitosamente' });
     } else {
         res.status(404).json({ error: 'Producto no encontrado' });
@@ -59,8 +69,6 @@ productsRouter.delete('/:pid', (req, res) => {
 });
 
 app.use('/api/products', productsRouter);
-
-const cartsRouter = express.Router();
 
 cartsRouter.get('/:cid', (req, res) => {
     const cartId = req.params.cid;
@@ -102,7 +110,29 @@ cartsRouter.post('/', (req, res) => {
 
 app.use('/api/carts', cartsRouter);
 
-app.listen(PORT, () => {
-    console.log(`Servidor escuchando en el puerto ${PORT}`);
+const io = require('socket.io')(server);
+
+io.on('connection', socket => {
+    console.log('Nuevo cliente conectado');
+    socket.emit('updateProducts', products);
+    socket.on('createProduct', product => {
+        products.push(product);
+        io.emit('updateProducts', products);
+    });
+    socket.on('deleteProduct', productId => {
+        products = products.filter(product => product.id !== productId);
+        io.emit('updateProducts', products);
+    });
 });
 
+app.get('/', (req, res) => {
+    res.render('home', { products });
+});
+
+app.get('/realtimeproducts', (req, res) => {
+    res.render('realTimeProducts', { products });
+});
+
+server.listen(PORT, () => {
+    console.log(`Servidor escuchando en el puerto ${PORT}`);
+});
